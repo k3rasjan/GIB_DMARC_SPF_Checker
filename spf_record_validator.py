@@ -40,7 +40,7 @@ def is_ip6_valid(ip: str):
     ip_regex = re.compile(r"[0-9a-f:]+(/(1[0-2][0-8]|[1-9][0-9]|[1-9]))?$")
 
     # Initial check of the syntax (characters and prefix length)
-    if ip_regex.match(ip):
+    if ip_regex.match(ip) and ip.find(":") > 0:
         ip = ip.split("/")[0]
         segments = ip.split(":")
         for index, segment in enumerate(segments):
@@ -57,8 +57,6 @@ def is_ip6_valid(ip: str):
                     omitting_zeros = True
                 if omitting_zeros and segment.startswith("0"):
                     return False
-
-        # TO DO Uni/Multi/Any cast check if it changes anything
 
         return True
     return False
@@ -109,13 +107,14 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
     redirect_check = False
     issues = []
     test_status = True
+    is_tag_before_all = False
 
     # Check if it is an spf record
     if spf_record.startswith("v=spf1"):
         if re.match(r"[A-Z]", spf_record):
             throw_issue(
                 "critical",
-                "Spf record should must not contain uppercase characters in it",
+                "Spf record must not contain uppercase characters in it",
                 issues,
             )
         # Split the record into items
@@ -127,12 +126,18 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
             if all_check:
                 throw_issue(
                     "critical",
-                    "No mechanism should be used after all mechanism - then all mechanism is not evaluated",
+                    "The all mechanism should be the last mechanism in the SPF record",
                     issues,
                 )
 
             # Check if the item is the all mechanism
             if item.endswith("all"):
+                if not is_tag_before_all:
+                    throw_issue(
+                        "critical",
+                        "all mechanism must not be the first or the only mechanism in the SPF record",
+                        issues,
+                    )
                 if redirect_check:
                     throw_issue(
                         "critical",
@@ -157,11 +162,13 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
 
             # Check if the item is the include mechanism
             elif item.startswith("include:"):
+                is_tag_before_all = True
                 include_domain = item.split(":")[1]
                 find_spf_record(include_domain, issues)
 
             # Check if the item is the redirect mechanism
             elif item.startswith("redirect="):
+                is_tag_before_all = True
                 if redirect_check:
                     throw_issue(
                         "critical", "redirect mechanism is used more than once", issues
@@ -172,6 +179,7 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
 
             # Check if the item is the ip4 mechanism
             elif item.startswith("ip4:"):
+                is_tag_before_all = True
                 ip = item.split(":")[1]
                 if not is_public_ip4(ip):
                     throw_issue(
@@ -182,13 +190,14 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
 
             # Check if the item is the ip6 mechanism
             elif item.startswith("ip6:"):
-                ip = item.split(":")[1]
+                is_tag_before_all = True
+                ip = item.replace("ip6:", "")
                 if not is_ip6_valid(ip):
                     throw_issue("critical", f"Invalid ipv6 address: {ip}", issues)
 
             # Check if the item is the a mechanism
             elif item.startswith("a"):
-                # TO DO: Add support for a with no arguments
+                is_tag_before_all = True
                 if item == "a":
                     a_records = find_a_record(curr_domain, issues)
                     for record in a_records:
@@ -225,6 +234,7 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
                                 )
                 # Not sure how to know if there would be an ipv4 or ipv6 address though it is easily rewritable to support both
                 elif item.startswith("a/"):
+
                     prefix = item.split("/")[1]
                     if not re.match(r"^(/(3[0-2]|[1-2][0-9]|[1-9]))$", prefix):
                         throw_issue(
@@ -241,6 +251,7 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
 
             #  Check if the item is the mx mechanism
             elif item.startswith("mx"):
+                is_tag_before_all = True
                 if item == "mx":
                     mx_records = find_mx_record(curr_domain, issues)
                     for mx_record in mx_records:
@@ -297,6 +308,7 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
 
             # Check if the item is the exists mechanism
             elif item.startswith("exists:"):
+                is_tag_before_all = True
                 domain = item.split(":")[1]
                 if not len(find_a_record(domain, issues)) > 0:
                     throw_issue(
@@ -313,7 +325,7 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
                 throw_issue("critical", f"Invalid mechanism: {item}", issues)
 
     else:
-        throw_issue("critical", "Provided string is not an SPF record", issues)
+        throw_issue("critical", "Provided string is not a SPF record", issues)
 
     if len(issues) > 0:
         test_status = False

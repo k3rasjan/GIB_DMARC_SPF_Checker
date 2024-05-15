@@ -41,7 +41,13 @@ def validate_dmarc(record: str, domain: str):
 
     user_tags = [tag.strip() for tag in record.split(";")]
     user_tags.pop(0)
-    user_tags.pop(-1)
+    if user_tags[-1] == "":
+        user_tags.pop(-1)
+    else:
+        throw_issue(
+            "error", "DMARC record does not end with a semicolon - there must be one after every tag", issues
+        )
+        test_status = False
 
     for tag in user_tags:
         validate_tag(tag, issues, domain)
@@ -73,7 +79,6 @@ def validate_tag(argument: str, issues: list, domain: str):
     if tag not in tag_rules.keys():
         throw_issue("error", f"Invalid tag: {tag}", issues)
         return issues
-
     match tag:
         case "ri":
             try:
@@ -170,8 +175,8 @@ def validate_tag(argument: str, issues: list, domain: str):
                 rules = f"{rule}"
                 for i in range(1, len(tag_rules[tag])):
                     rules += " or " + tag_rules[tag][i]
-
                 throw_issue("error", f"Tag {tag} value must be {rules}", issues)
+
             if tag == "p" or tag == "sp":
                 if value == "none":
                     throw_issue(
@@ -179,3 +184,5 @@ def validate_tag(argument: str, issues: list, domain: str):
                         f"Tag {tag} is set to none. It is recommended to set it to quarantine or reject",
                         issues,
                     )
+
+        

@@ -123,6 +123,14 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
         spf_record.pop(0)
         # Iterate over the items
         for item in spf_record:
+            # Check if there is no tags after all mechanism
+            if all_check:
+                throw_issue(
+                    "critical",
+                    "No mechanism should be used after all mechanism - then all mechanism is not evaluated",
+                    issues,
+                )
+
             # Check if the item is the all mechanism
             if item.endswith("all"):
                 if redirect_check:
@@ -142,10 +150,11 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
                 if item.startswith("+") or item.startswith("?"):
                     throw_issue(
                         "warning",
-                        "all mechanism should be prefixed with - or ~",
+                        "It is preffered for the all tag to be - or ~",
                         issues,
                     )
                 all_check = True
+
             # Check if the item is the include mechanism
             elif item.startswith("include:"):
                 include_domain = item.split(":")[1]
@@ -156,12 +165,6 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
                 if redirect_check:
                     throw_issue(
                         "critical", "redirect mechanism is used more than once", issues
-                    )
-                if all_check:
-                    throw_issue(
-                        "critical",
-                        "redirect mechanism should not be used after all mechanism - then all mechanism is not evaluated",
-                        issues,
                     )
                 redirect_domain = item.split("=")[1]
                 find_spf_record(redirect_domain, issues)
@@ -315,12 +318,3 @@ def validate_spf(spf_record: str, curr_domain: str, issues: list = []):
     if len(issues) > 0:
         test_status = False
     return {"status": test_status, "issues": issues}
-
-
-valid_spf = "v=spf1 include:_spf.ikea.com include:spf.protection.outlook.com -all"
-
-result = validate_spf(valid_spf, "ikea.com")
-
-print(result["status"])
-for issue in result["issues"]:
-    print(issue)

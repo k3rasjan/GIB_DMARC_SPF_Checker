@@ -26,7 +26,6 @@ def validate_domain(host_portion: str, domain: str):
                 check = True
 
     # could ask server if email name exists but not optimal and not always important
-
     return check
 
 
@@ -37,6 +36,8 @@ def validate_dmarc(record: str, domain: str):
 
     if not record.startswith("v=DMARC1"):
         throw_issue("critical", "DMARC record does not start with v=DMARC1", issues)
+        test_status = False
+        return {"status": test_status, "issues": issues}
 
     user_tags = [tag.strip() for tag in record.split(";")]
     user_tags.pop(0)
@@ -50,20 +51,18 @@ def validate_dmarc(record: str, domain: str):
 
 
 # Validating tags
-def validate_tag(tag: str, issues: list, domain: str):
-    valid_tags = ["p", "sp", "rua", "ruf", "fo", "adkim", "aspf", "rf", "ri", "pct"]
-    tag = tag.split("=")
+def validate_tag(argument: str, issues: list, domain: str):
+    tag = argument.split("=")[0]
+    if len(argument.split("=")) > 1:
+        value = argument.split("=")[1]
 
-    if tag[0] not in valid_tags:
-        throw_issue("error", f"Invalid tag: {tag[0]}", issues)
-        return issues
 
     tag_rules = {
         "p": ["none", "quarantine", "reject"],
         "sp": ["none", "quarantine", "reject"],
         "rua": ["email"],
         "ruf": ["email"],
-        "fo": [0, 1, "d", "s"],  # list
+        "fo": ["0", "1", "d", "s"],  # list
         "adkim": ["s", "r"],
         "aspf": ["s", "r"],
         "rf": ["afrf"],
@@ -71,105 +70,112 @@ def validate_tag(tag: str, issues: list, domain: str):
         "pct": [0, 100],
     }
 
-    match tag[0]:
-        case "ri":
+    if tag not in tag_rules.keys():
+        throw_issue("error", f"Invalid tag: {tag}", issues)
+        return issues
 
+    match tag:
+        case "ri":
             try:
-                tag[1] = int(tag[1])
+                value = int(value)
             except:
                 throw_issue(
                     "error", "ri tag value must be a 32-bit unsigned integer", issues
                 )
             else:
-                if tag[1] < 0 or tag[1] > 4294967295:
+                if value < 0 or value > 4294967295:
                     throw_issue(
                         "error", "ri tag value is not a 32-bit unsigned integer", issues
                     )
 
         case "pct":
             try:
-                tag[1] = int(tag[1])
+                value = int(value)
             except:
-                throw_issue("error", "pct tag value must be an integer", issues)
+                throw_issue(
+                    "error",
+                    "pct tag value must be an integer between 0 and 100 prefferably 100",
+                    issues,
+                )
             else:
-                if tag[1] < 0 or tag[1] > 100:
+                if value < 0 or value > 100:
                     throw_issue(
-                        "error", "pct tag value must be between 0 and 100", issues
+                        "error",
+                        "pct tag value must be between 0 and 100 prefferably 100",
+                        issues,
                     )
-                elif tag[1] < 100:
+                elif value < 100:
                     throw_issue(
                         "warning", "It is safer if pct tag value is set to 100", issues
                     )
 
         case "fo":
-            values = tag[1].split(":")
+            values = value.split(":")
+            used_values = []
             for value in values:
-                if value not in ["0", "1", "d", "s"]:
-                    throw_issue("error", "Invalid value in fo tag", issues)
+                if value not in tag_rules["fo"]:
+                    throw_issue("error", f"Invalid value: {value} in fo tag it should be one of: {tag_rules["fo"]}", issues)
+                else:
+                    if value in used_values:
+                        throw_issue("error", f"Duplicate value in fo tag", issues)
+                    used_values.append(value)
+
 
         # TO DO: Fix this code, make it explain why the email is invalid
 
         case "rua" | "ruf":
-            mails = tag[1].split(",")
+            mails = value.split(",")
             for mail in mails:
                 if not mail.startswith("mailto:"):
-                    throw_issue("error", f"Invalid email in {tag[0]} tag", issues)
+                    throw_issue("error", f"Invalid email in {tag} tag", issues)
                 else:
                     mail = mail.replace("mailto:", "")
                     if not "@" in mail:
-                        throw_issue("error", f"Invalid email in {tag[0]} tag", issues)
+                        throw_issue("error", f"Invalid email in {tag} tag", issues)
                     else:
                         mail = mail.split("@")
                         if len(mail) != 2:
                             throw_issue(
-                                "error", f"Invalid email in {tag[0]} tag", issues
+                                "error", f"Invalid email in {tag} tag", issues
                             )
                         else:
                             if mail[1].startswith("."):
                                 throw_issue(
                                     "error",
-                                    f"Invalid email in {tag[0]} tag. Domain should not start with a .",
+                                    f"Invalid email in {tag} tag. Domain should not start with a .",
                                     issues,
                                 )
                             elif mail[0].endswith(".") or mail[0].startswith("."):
                                 throw_issue(
                                     "error",
-                                    f"Invalid email in {tag[0]} tag. Mail should not start nor  end with a .",
+                                    f"Invalid email in {tag} tag. Mail should not start nor  end with a .",
                                     issues,
                                 )
                             elif mail[0].find("..") > 0:
                                 throw_issue(
                                     "error",
-                                    f"Invalid email in {tag[0]} tag. Mail should not include ..",
+                                    f"Invalid email in {tag} tag. Mail should not include ..",
                                     issues,
                                 )
                         if not validate_domain(mail[1], domain):
                             throw_issue(
                                 "error",
-                                f"Email: {mail[1]} provided in {tag[0]} tag does not accept reports from your domain or is invalid.",
+                                f"Email: {mail[1]} provided in {tag} tag does not accept reports from your domain or is invalid.",
                                 issues,
                             )
 
         case _:
-            if tag[1] not in tag_rules[tag[0]]:
-                rules = f"{tag_rules[tag[0]][0]}"
-                for i in range(1, len(tag_rules[tag[0]])):
-                    rules += " or " + tag_rules[tag[0]][i]
+            if value not in tag_rules[tag]:
+                rule = tag_rules[tag][0]
+                rules = f"{rule}"
+                for i in range(1, len(tag_rules[tag])):
+                    rules += " or " + tag_rules[tag][i]
 
-                throw_issue("error", f"Tag {tag[0]} value must be {rules}", issues)
-            if tag[0] == "p" or tag[0] == "sp":
-                if tag[1] == "none":
+                throw_issue("error", f"Tag {tag} value must be {rules}", issues)
+            if tag == "p" or tag == "sp":
+                if value == "none":
                     throw_issue(
                         "warning",
-                        f"Tag {tag[0]} is set to none. It is recommended to set it to quarantine or reject",
+                        f"Tag {tag} is set to none. It is recommended to set it to quarantine or reject",
                         issues,
                     )
-
-
-valid_dmarc = "v=DMARC1;pct=100;p=quarantine;sp=quarantine;pct=100;adkim=s;aspf=s;rua=mailto:re+utmxvyjdosi@dmarc.postmarkapp.com,mailto:easy58d26@easydmarc.com,mailto:alerts@makrosystem.com,mailto:sdaasd@dasdsa.pl;ruf=mailto:ruf@rep.easydmarc.com,mailto:alerts@makrosystem.com;"
-
-result = validate_dmarc(valid_dmarc, "makrosystem.com")
-
-print(result["status"])
-for issue in result["issues"]:
-    print(issue)

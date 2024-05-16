@@ -4,3 +4,4 @@
 
 1. Install [Python](https://www.python.org/)
 2. Run `pip install dnspython`
+3. Run `pip install pytest`
